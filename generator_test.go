@@ -1,4 +1,4 @@
-package main
+package anchor_idl
 
 import (
 	"encoding/json"
@@ -147,8 +147,8 @@ func Test_genTypeName(t *testing.T) {
 			if err != nil {
 				panic(err)
 			}
-			code := Var().Id("thing").Add(genTypeName(target.Type))
-			got := codeToString(code)
+			code := Var().Id("thing").Add(GenTypeName(target.Type))
+			got := CodeToString(code)
 			require.Equal(t, scenario.expected, got)
 		}
 	}
@@ -178,9 +178,9 @@ func Test_genField(t *testing.T) {
 				panic(err)
 			}
 			code := Var().Id("thing").Struct(
-				genField(target, false),
+				GenField(target, false),
 			)
-			got := codeToString(code)
+			got := CodeToString(code)
 			require.Equal(t, scenario.expected, got)
 		}
 	}
@@ -264,7 +264,7 @@ func Test_IdlAccountItemSlice_Walk(t *testing.T) {
 
 	require.Equal(t, expectedGroups, gotGroups)
 	require.Equal(t, expectedAccountNames, gotAccountNames)
-	require.Equal(t, expectedIndexes, gotIndexes)
+	require.Equal(t, expectedIndexes, gotIndexes)	
 }
 
 func TestFormatAccountAccessorName(t *testing.T) {
@@ -276,9 +276,9 @@ func TestFormatAccountAccessorName(t *testing.T) {
 	t.Run("remove config on", func(t *testing.T) {
 		oldConf := GetConfig()
 		defer func() {
-			conf = oldConf
+			Conf = oldConf
 		}()
-		conf = &Config{
+		Conf = &Config{
 			RemoveAccountSuffix: true,
 		}
 

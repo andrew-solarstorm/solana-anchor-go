@@ -1,4 +1,4 @@
-package main
+package anchor_idl
 
 import (
 	"errors"
@@ -7,7 +7,7 @@ import (
 	. "github.com/gagliardetto/utilz"
 )
 
-var conf = &Config{}
+var Conf = &Config{}
 
 type Config struct {
 	Encoding            EncoderName
@@ -20,7 +20,7 @@ type Config struct {
 }
 
 func GetConfig() *Config {
-	return conf
+	return Conf
 }
 
 // Validate validates

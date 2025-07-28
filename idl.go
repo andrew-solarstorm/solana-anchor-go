@@ -1,4 +1,4 @@
-package main
+package anchor_idl
 
 import (
 	"encoding/json"
@@ -290,7 +290,7 @@ func (env *IdlType) UnmarshalJSON(data []byte) error {
 	switch v := temp.(type) {
 	case string:
 		{
-			env.asString = IdlTypeAsString(v)
+			env.AsString = IdlTypeAsString(v)
 		}
 	case map[string]interface{}:
 		{
@@ -306,21 +306,21 @@ func (env *IdlType) UnmarshalJSON(data []byte) error {
 				if err := TranscodeJSON(temp, &target); err != nil {
 					return err
 				}
-				env.asIdlTypeVec = &target
+				env.AsIdlTypeVec = &target
 			}
 			if _, ok := v["option"]; ok {
 				var target IdlTypeOption
 				if err := TranscodeJSON(temp, &target); err != nil {
 					return err
 				}
-				env.asIdlTypeOption = &target
+				env.AsIdlTypeOption = &target
 			}
 			if _, ok := v["defined"]; ok {
 				var target IdlTypeDefined
 				if err := TranscodeJSON(temp, &target); err != nil {
 					return err
 				}
-				env.asIdlTypeDefined = &target
+				env.AsIdlTypeDefined = &target
 			}
 			if got, ok := v["array"]; ok {
 
@@ -338,7 +338,7 @@ func (env *IdlType) UnmarshalJSON(data []byte) error {
 
 				target.Num = int(arrVal[1].(float64))
 
-				env.asIdlTypeArray = &target
+				env.AsIdlTypeArray = &target
 			}
 			// panic(Sf("what is this?:\n%s", spew.Sdump(temp)))
 		}
@@ -351,57 +351,57 @@ func (env *IdlType) UnmarshalJSON(data []byte) error {
 
 // IdlType is a Wrapper type:
 type IdlType struct {
-	asString         IdlTypeAsString
-	asIdlTypeVec     *IdlTypeVec
-	asIdlTypeOption  *IdlTypeOption
-	asIdlTypeDefined *IdlTypeDefined
-	asIdlTypeArray   *IdlTypeArray
+	AsString         IdlTypeAsString
+	AsIdlTypeVec     *IdlTypeVec
+	AsIdlTypeOption  *IdlTypeOption
+	AsIdlTypeDefined *IdlTypeDefined
+	AsIdlTypeArray   *IdlTypeArray
 }
 
 func (env *IdlType) IsString() bool {
-	return env.asString != ""
+	return env.AsString != ""
 }
 func (env *IdlType) IsIdlTypeVec() bool {
-	return env.asIdlTypeVec != nil
+	return env.AsIdlTypeVec != nil
 }
 func (env *IdlType) IsIdlTypeOption() bool {
-	return env.asIdlTypeOption != nil
+	return env.AsIdlTypeOption != nil
 }
 func (env *IdlType) IsIdlTypeDefined() bool {
-	return env.asIdlTypeDefined != nil
+	return env.AsIdlTypeDefined != nil
 }
 func (env *IdlType) IsArray() bool {
-	return env.asIdlTypeArray != nil
+	return env.AsIdlTypeArray != nil
 }
 
 // Getters:
 func (env *IdlType) GetString() IdlTypeAsString {
-	return env.asString
+	return env.AsString
 }
 func (env *IdlType) GetIdlTypeVec() *IdlTypeVec {
-	return env.asIdlTypeVec
+	return env.AsIdlTypeVec
 }
 func (env *IdlType) GetIdlTypeOption() *IdlTypeOption {
-	return env.asIdlTypeOption
+	return env.AsIdlTypeOption
 }
 func (env *IdlType) GetIdlTypeDefined() *IdlTypeDefined {
-	return env.asIdlTypeDefined
+	return env.AsIdlTypeDefined
 }
 func (env *IdlType) GetArray() *IdlTypeArray {
-	return env.asIdlTypeArray
+	return env.AsIdlTypeArray
 }
 func (env *IdlType) GetDefinedFieldName() *string {
 	if env.IsIdlTypeDefined() {
-		return &env.asIdlTypeDefined.Defined.Name
+		return &env.AsIdlTypeDefined.Defined.Name
 	}
 	if env.IsIdlTypeVec() {
-		return env.asIdlTypeVec.Vec.GetDefinedFieldName()
+		return env.AsIdlTypeVec.Vec.GetDefinedFieldName()
 	}
 	if env.IsIdlTypeOption() {
-		return env.asIdlTypeOption.Option.GetDefinedFieldName()
+		return env.AsIdlTypeOption.Option.GetDefinedFieldName()
 	}
 	if env.IsArray() {
-		return env.asIdlTypeArray.Elem.GetDefinedFieldName()
+		return env.AsIdlTypeArray.Elem.GetDefinedFieldName()
 	}
 	return nil
 }

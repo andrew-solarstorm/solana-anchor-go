@@ -1,14 +1,15 @@
-package main
+package anchor_idl
 
 import (
+	"strings"
+
 	. "github.com/dave/jennifer/jen"
 	. "github.com/gagliardetto/utilz"
-	"strings"
 )
 
 func isInsFieldComplexEnum(envelopes ...IdlField) bool {
 	for _, v := range envelopes {
-		if isComplexEnum(v.Type) {
+		if IsComplexEnum(v.Type) {
 			return true
 		}
 	}
@@ -22,7 +23,7 @@ func isInsDeepFieldComplexEnum(idl IDL, envelopes ...IdlField) bool {
 			derivedType := idl.Types.GetByName(*definedTypeName).Type
 			if derivedType.Fields != nil {
 				for _, field := range *derivedType.Fields {
-					if isComplexEnum(field.Type) {
+					if IsComplexEnum(field.Type) {
 						return true
 					}
 				}
@@ -36,7 +37,7 @@ func isInsDeepFieldComplexEnum(idl IDL, envelopes ...IdlField) bool {
 func countFieldComplexEnum(envelopes ...IdlField) int {
 	var count int
 	for _, v := range envelopes {
-		if isComplexEnum(v.Type) {
+		if IsComplexEnum(v.Type) {
 			count++
 		}
 	}
@@ -138,11 +139,11 @@ func genTestingFuncs(idl IDL) ([]*FileWrapper, error) {
 									BlockFunc(func(tFunGroup *Group) {
 
 										if isInsFieldComplexEnum(instruction.Args...) {
-											genTestWithComplexEnum(tFunGroup, formatInstructionTypeName(insExportedName), instruction, idl)
+											genTestWithComplexEnum(tFunGroup, FormatInstructionTypeName(insExportedName), instruction, idl)
 										} else if isInsDeepFieldComplexEnum(idl, instruction.Args...) {
-											genTestWithDeepComplexEnum(tFunGroup, formatInstructionTypeName(insExportedName), instruction, idl)
+											genTestWithDeepComplexEnum(tFunGroup, FormatInstructionTypeName(insExportedName), instruction, idl)
 										} else {
-											genTestNOComplexEnum(tFunGroup, formatInstructionTypeName(insExportedName), instruction)
+											genTestNOComplexEnum(tFunGroup, FormatInstructionTypeName(insExportedName), instruction)
 										}
 									}),
 								)
@@ -186,7 +187,7 @@ func genTestNOComplexEnum(tFunGroup *Group, insExportedName string, instruction 
 func genTestWithComplexEnum(tFunGroup *Group, insExportedName string, instruction IdlInstruction, idl IDL) {
 	// Create a test for each complex enum argument:
 	for _, arg := range instruction.Args {
-		if !isComplexEnum(arg.Type) {
+		if !IsComplexEnum(arg.Type) {
 			continue
 		}
 		exportedArgName := ToCamel(arg.Name)
@@ -236,7 +237,7 @@ func genTestWithDeepComplexEnum(tFunGroup *Group, insExportedName string, instru
 
 	// Bypass testing for structs containing enum fields
 	for _, arg := range instruction.Args {
-		if isComplexEnum(arg.Type) {
+		if IsComplexEnum(arg.Type) {
 			continue
 		}
 		exportedArgName := ToCamel(arg.Name)

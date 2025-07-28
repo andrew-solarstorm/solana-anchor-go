@@ -1,8 +1,9 @@
-package main
+package anchor_idl
 
 import (
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	. "github.com/dave/jennifer/jen"
@@ -83,17 +84,17 @@ var sysVars = map[string]solana.PublicKey{
 	"SysVarRewardsPubkey":           solana.SysVarRewardsPubkey,
 }
 
-func isVar(name string) bool {
+func IsVar(name string) bool {
 	return strings.HasPrefix(name, "$(") && strings.HasSuffix(name, ")")
 }
 
-func getSysVarName(variable string) string {
+func GetSysVarName(variable string) string {
 	variable = strings.TrimPrefix(variable, "$(")
 	variable = strings.TrimSuffix(variable, ")")
 	return variable
 }
 
-func isSysVar(name string) bool {
+func IsSysVar(name string) bool {
 	_, ok := sysVars[name]
 	return ok
 }
@@ -110,4 +111,57 @@ func CodeIf(condition bool, code Code) Code {
 		return code
 	}
 	return Null()
+}
+
+// formatAccountAccessorName formats a name for a function that
+// either gets or sets an account.
+// If the RemoveAccountSuffix config flag is set, and the name already
+// has an "Account" suffix, then another "Account" suffix is NOT added.
+// E.g. ("Set", "Foo") => "SetFooAccount"
+// E.g. ("Set", "BarAccount") => "SetBarAccount"
+func formatAccountAccessorName(prefix, name string) string {
+	endsWithAccount := strings.HasSuffix(strings.ToLower(name), "account")
+	if !Conf.RemoveAccountSuffix || !endsWithAccount {
+		return prefix + name + "Account"
+	}
+	return prefix + name
+}
+
+func treeFindLongestNameFromFields(fields []IdlField) (ln int) {
+	for _, v := range fields {
+		if len(v.Name) > ln {
+			ln = len(v.Name)
+		}
+	}
+	return
+}
+
+func treeFindLongestNameFromAccounts(accounts IdlAccountItemSlice) (ln int) {
+	accounts.Walk("", nil, nil, func(groupPath string, accountIndex int, parentGroup *IdlAccounts, ia *IdlAccount) bool {
+
+		cleanedName := treeFormatAccountName(ia.Name)
+
+		exportedAccountName := filepath.Join(groupPath, cleanedName)
+		if len(exportedAccountName) > ln {
+			ln = len(exportedAccountName)
+		}
+
+		return true
+	})
+	return
+}
+
+func treeFormatAccountName(name string) string {
+	cleanedName := name
+	if IsSysVar(name) {
+		cleanedName = strings.TrimSuffix(GetSysVarName(name), "PublicKey")
+	}
+	if len(cleanedName) > len("account") {
+		if strings.HasSuffix(cleanedName, "account") {
+			cleanedName = strings.TrimSuffix(cleanedName, "account")
+		} else if strings.HasSuffix(cleanedName, "Account") {
+			cleanedName = strings.TrimSuffix(cleanedName, "Account")
+		}
+	}
+	return cleanedName
 }

@@ -1,17 +1,11 @@
-package main
+package anchor_idl
 
 import (
 	"bytes"
-	"encoding/json"
-	"flag"
 	"fmt"
-	"io/ioutil"
-	"os"
-	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/davecgh/go-spew/spew"
@@ -21,210 +15,9 @@ import (
 	"github.com/fragmetric-labs/solana-anchor-go/sighash"
 	bin "github.com/gagliardetto/binary"
 	. "github.com/gagliardetto/utilz"
-	"golang.org/x/mod/modfile"
 )
 
 const generatedDir = "generated"
-
-// TODO:
-// - tests where type has field that is a complex enum (represented as an interface): assign a random concrete value from the possible enum variants.
-// - when printing tree, check for len before accessing array indexes.
-
-func main() {
-	conf.Encoding = EncodingBorsh
-	conf.TypeID = TypeIDAnchor
-
-	filenames := FlagStringArray{}
-	flag.Var(&filenames, "src", "Path to source; can use multiple times.")
-	flag.StringVar(&conf.DstDir, "dst", generatedDir, "Destination folder")
-	flag.StringVar(&conf.Package, "pkg", "", "Set package name to generate, default value is metadata.name of the source IDL.")
-	flag.BoolVar(&conf.Debug, "debug", false, "debug mode")
-	flag.BoolVar(&conf.RemoveAccountSuffix, "remove-account-suffix", false, "Remove \"Account\" suffix from accessors (if leads to duplication, e.g. \"SetFooAccountAccount\")")
-
-	flag.StringVar((*string)(&conf.Encoding), "codec", string(EncodingBorsh), "Choose codec")
-	flag.StringVar((*string)(&conf.TypeID), "type-id", string(TypeIDAnchor), "Choose typeID kind")
-	flag.StringVar(&conf.ModPath, "mod", "", "Generate a go.mod file with the necessary dependencies, and this module")
-	flag.Parse()
-
-	if err := conf.Validate(); err != nil {
-		panic(fmt.Errorf("error while validating config: %w", err))
-	}
-
-	var ts time.Time
-	if GetConfig().Debug {
-		ts = time.Unix(0, 0)
-	} else {
-		ts = time.Now()
-	}
-	if len(filenames) == 0 {
-		Sfln(
-			"[%s] No IDL files provided",
-			Red(XMark),
-		)
-		os.Exit(1)
-	}
-	{
-		exists, err := DirExists(GetConfig().DstDir)
-		if err != nil {
-			panic(err)
-		}
-		if !exists {
-			MustCreateFolderIfNotExists(GetConfig().DstDir, os.ModePerm)
-		}
-	}
-
-	callbacks := make([]func(), 0)
-	defer func() {
-		for _, cb := range callbacks {
-			cb()
-		}
-	}()
-
-	for _, idlFilepath := range filenames {
-		Sfln(
-			"[%s] Generating client from IDL: %s",
-			Shakespeare("+"),
-			Shakespeare(idlFilepath),
-		)
-		idlFile, err := os.Open(idlFilepath)
-		if err != nil {
-			panic(err)
-		}
-
-		dec := json.NewDecoder(idlFile)
-
-		var idl IDL
-
-		err = dec.Decode(&idl)
-		if err != nil {
-			panic(err)
-		}
-		{
-			if idl.State != nil {
-				Sfln(
-					"%s idl.State is defined, but generator is not implemented yet.",
-					OrangeBG("[?]"),
-				)
-			}
-			//if len(idl.Events) > 0 {
-			//	Sfln(
-			//		"%s idl.Events is defined, but generator is not implemented yet.",
-			//		OrangeBG("[?]"),
-			//	)
-			//}
-			//if len(idl.Errors) > 0 {
-			//	Sfln(
-			//		"%s idl.Errors is defined, but generator is not implemented yet.",
-			//		OrangeBG("[?]"),
-			//	)
-			//}
-		}
-
-		// spew.Dump(idl)
-
-		// Create subfolder for package for generated assets:
-		packageAssetFolderName := sighash.ToRustSnakeCase(idl.Metadata.Name)
-		var dstDirForFiles string
-		if GetConfig().Debug {
-			packageAssetFolderPath := path.Join(GetConfig().DstDir, packageAssetFolderName)
-			MustCreateFolderIfNotExists(packageAssetFolderPath, os.ModePerm)
-			// Create folder for assets generated during this run:
-			thisRunAssetFolderName := ToLowerCamel(idl.Metadata.Name) + "_" + ts.Format(FilenameTimeFormat)
-			thisRunAssetFolderPath := path.Join(packageAssetFolderPath, thisRunAssetFolderName)
-			// Create a new assets folder inside the main assets folder:
-			MustCreateFolderIfNotExists(thisRunAssetFolderPath, os.ModePerm)
-			dstDirForFiles = thisRunAssetFolderPath
-		} else {
-			if GetConfig().DstDir == generatedDir {
-				dstDirForFiles = filepath.Join(GetConfig().DstDir, packageAssetFolderName)
-			} else {
-				dstDirForFiles = GetConfig().DstDir
-			}
-		}
-		MustCreateFolderIfNotExists(dstDirForFiles, os.ModePerm)
-
-		files, err := GenerateClientFromProgramIDL(idl)
-		if err != nil {
-			panic(err)
-		}
-
-		{
-			mdf := &modfile.File{}
-			mdf.AddModuleStmt(GetConfig().ModPath)
-
-			mdf.AddNewRequire("github.com/gagliardetto/solana-go", "v1.12.0", false)
-			mdf.AddNewRequire("github.com/gagliardetto/treeout", "v0.1.4", false)
-			mdf.AddNewRequire("github.com/gagliardetto/gofuzz", "v1.2.2", false)
-			mdf.AddNewRequire("github.com/stretchr/testify", "v1.6.1", false)
-			mdf.AddNewRequire("github.com/davecgh/go-spew", "v1.1.1", false)
-			mdf.Cleanup()
-
-			//callbacks = append(callbacks, func() {
-			//	Ln()
-			//	Ln(Bold("Don't forget to import the necessary dependencies!"))
-			//	Ln()
-			//	for _, v := range mdf.Require {
-			//		Sfln(
-			//			"	go get %s@%s",
-			//			v.Mod.Path,
-			//			v.Mod.Version,
-			//		)
-			//	}
-			//	Ln()
-			//})
-
-			if GetConfig().ModPath != "" {
-				mfBytes, err := mdf.Format()
-				if err != nil {
-					panic(err)
-				}
-				gomodFilepath := filepath.Join(dstDirForFiles, "go.mod")
-				Sfln(
-					"[%s] %s",
-					Lime(Checkmark),
-					MustAbs(gomodFilepath),
-				)
-				// Write `go.mod` file:
-				err = ioutil.WriteFile(gomodFilepath, mfBytes, 0666)
-				if err != nil {
-					panic(err)
-				}
-			}
-		}
-
-		for _, file := range files {
-			// err := file.Render(os.Stdout)
-			// if err != nil {
-			// 	panic(err)
-			// }
-
-			file.File.HeaderComment("Code generated by https://github.com/gagliardetto/anchor-go. DO NOT EDIT.")
-			{
-				// Save assets:
-				assetFileName := file.Name + ".go"
-				assetFilepath := path.Join(dstDirForFiles, assetFileName)
-
-				// Create file:
-				goFile, err := os.Create(assetFilepath)
-				if err != nil {
-					panic(err)
-				}
-				defer goFile.Close()
-
-				// Write generated code file:
-				Sfln(
-					"[%s] %s",
-					Lime(Checkmark),
-					MustAbs(assetFilepath),
-				)
-				err = file.File.Render(goFile)
-				if err != nil {
-					panic(err)
-				}
-			}
-		}
-	}
-}
 
 func FormatSighash(buf []byte) string {
 	elems := make([]string, 0)
@@ -292,10 +85,10 @@ func DecodeInstructions(message *ag_solanago.Message) (instructions []*Instructi
 	{
 		// register complex enums:
 		for _, typ := range idl.Types {
-			registerComplexEnums(&idl, typ)
+			RegisterComplexEnums(&idl, typ)
 		}
 		for _, typ := range idl.Accounts {
-			registerComplexEnums(&idl, typ)
+			RegisterComplexEnums(&idl, typ)
 		}
 	}
 
@@ -305,7 +98,7 @@ func DecodeInstructions(message *ag_solanago.Message) (instructions []*Instructi
 		// Declare types from IDL:
 		for _, typ := range idl.Types {
 			defs[typ.Name] = typ
-			file.Add(genTypeDef(&idl, nil, IdlTypeDef{
+			file.Add(GenTypeDef(&idl, nil, IdlTypeDef{
 				Name: typ.Name,
 				Type: typ.Type,
 			}))
@@ -321,7 +114,7 @@ func DecodeInstructions(message *ag_solanago.Message) (instructions []*Instructi
 		// Declare account layouts from IDL:
 		for _, acc := range idl.Accounts {
 			if _, ok := defs[acc.Name]; ok {
-				file.Add(genTypeDef(&idl, acc.Discriminator, IdlTypeDef{
+				file.Add(GenTypeDef(&idl, acc.Discriminator, IdlTypeDef{
 					Name: defs[acc.Name].Name + "Account",
 					Type: defs[acc.Name].Type,
 				}))
@@ -342,7 +135,7 @@ func DecodeInstructions(message *ag_solanago.Message) (instructions []*Instructi
 		for _, evt := range idl.Events {
 			if _, ok := defs[evt.Name]; ok {
 				eventDataTypeName := defs[evt.Name].Name + "EventData"
-				file.Add(genTypeDef(&idl, evt.Discriminator, IdlTypeDef{
+				file.Add(GenTypeDef(&idl, evt.Discriminator, IdlTypeDef{
 					Name: eventDataTypeName,
 					Type: defs[evt.Name].Type,
 				}))
@@ -621,17 +414,17 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 				Name: arg.Name,
 				Docs: arg.Docs,
 				Type: IdlType{
-					asString:         arg.Type.asString,
-					asIdlTypeVec:     arg.Type.asIdlTypeVec,
-					asIdlTypeOption:  arg.Type.asIdlTypeOption,
-					asIdlTypeArray:   arg.Type.asIdlTypeArray,
-					asIdlTypeDefined: nil,
+					AsString:         arg.Type.AsString,
+					AsIdlTypeVec:     arg.Type.AsIdlTypeVec,
+					AsIdlTypeOption:  arg.Type.AsIdlTypeOption,
+					AsIdlTypeArray:   arg.Type.AsIdlTypeArray,
+					AsIdlTypeDefined: nil,
 				},
 			}
-			if arg.Type.asIdlTypeDefined != nil {
-				idlFieldArg.Type.asIdlTypeDefined = &IdlTypeDefined{
+			if arg.Type.AsIdlTypeDefined != nil {
+				idlFieldArg.Type.AsIdlTypeDefined = &IdlTypeDefined{
 					Defined: IdLTypeDefinedName{
-						Name: arg.Type.asIdlTypeDefined.Defined.Name,
+						Name: arg.Type.AsIdlTypeDefined.Defined.Name,
 					},
 				}
 			}
@@ -655,7 +448,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 				).Line()
 			}
 
-			code.Type().Id(formatInstructionTypeName(insExportedName)).StructFunc(func(fieldsGroup *Group) {
+			code.Type().Id(FormatInstructionTypeName(insExportedName)).StructFunc(func(fieldsGroup *Group) {
 				for argIndex, arg := range args {
 					if len(arg.Docs) > 0 {
 						if argIndex > 0 {
@@ -665,7 +458,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 							fieldsGroup.Comment(doc)
 						}
 					}
-					fieldsGroup.Add(genField(arg, true)).
+					fieldsGroup.Add(GenField(arg, true)).
 						Add(func() Code {
 							if arg.Type.IsIdlTypeOption() {
 								return Tag(map[string]string{
@@ -737,25 +530,25 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 		}
 
 		{
-			builderFuncName := formatBuilderFuncName(insExportedName)
+			builderFuncName := FormatBuilderFuncName(insExportedName)
 			code := Empty()
 			code.Commentf(
 				"%s creates a new `%s` instruction builder.",
 				builderFuncName,
-				formatInstructionTypeName(insExportedName),
+				FormatInstructionTypeName(insExportedName),
 			).Line()
 			//
-			code.Func().Id(builderFuncName).Params().Op("*").Id(formatInstructionTypeName(insExportedName)).
+			code.Func().Id(builderFuncName).Params().Op("*").Id(FormatInstructionTypeName(insExportedName)).
 				BlockFunc(func(body *Group) {
-					body.Id("nd").Op(":=").Op("&").Id(formatInstructionTypeName(insExportedName)).Block(
+					body.Id("nd").Op(":=").Op("&").Id(FormatInstructionTypeName(insExportedName)).Block(
 						Id("AccountMetaSlice").Op(":").Make(Qual(PkgSolanaGo, "AccountMetaSlice"), Lit(instruction.Accounts.NumAccounts())).Op(","),
 					)
 
 					// Set sysvar accounts and constant accounts:
 					instruction.Accounts.Walk("", nil, nil, func(parentGroupPath string, index int, parentGroup *IdlAccounts, account *IdlAccount) bool {
-						if isVar(account.Name) {
-							pureVarName := getSysVarName(account.Name)
-							is := isSysVar(pureVarName)
+						if IsVar(account.Name) {
+							pureVarName := GetSysVarName(account.Name)
+							is := IsSysVar(pureVarName)
 							if is {
 								_, ok := sysVars[pureVarName]
 								if !ok {
@@ -805,24 +598,24 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 					code.Comment(doc).Line()
 				}
 
-				code.Func().Params(Id("inst").Op("*").Id(formatInstructionTypeName(insExportedName))).Id(name).
+				code.Func().Params(Id("inst").Op("*").Id(FormatInstructionTypeName(insExportedName))).Id(name).
 					Params(
 						ListFunc(func(params *Group) {
 							// Parameters:
-							params.Id(arg.Name).Add(genTypeName(arg.Type))
+							params.Id(arg.Name).Add(GenTypeName(arg.Type))
 						}),
 					).
 					Params(
 						ListFunc(func(results *Group) {
 							// Results:
-							results.Op("*").Id(formatInstructionTypeName(insExportedName))
+							results.Op("*").Id(FormatInstructionTypeName(insExportedName))
 						}),
 					).
 					BlockFunc(func(body *Group) {
 						// Body:
 						body.Id("inst").Dot(exportedArgName).Op("=").
 							Add(func() Code {
-								if isComplexEnum(arg.Type) {
+								if IsComplexEnum(arg.Type) {
 									return Op("&")
 								}
 								return Op("&")
@@ -874,7 +667,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 						}).Line().Line()
 
 					// Method on intruction builder that accepts the accounts group builder, and copies the accounts:
-					code.Line().Line().Func().Params(Id("inst").Op("*").Id(formatInstructionTypeName(insExportedName))).Id("Set" + ToCamel(parentGroup.Name) + "AccountsFromBuilder").
+					code.Line().Line().Func().Params(Id("inst").Op("*").Id(FormatInstructionTypeName(insExportedName))).Id("Set" + ToCamel(parentGroup.Name) + "AccountsFromBuilder").
 						Params(
 							ListFunc(func(st *Group) {
 								// Parameters:
@@ -884,7 +677,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 						Params(
 							ListFunc(func(st *Group) {
 								// Results:
-								st.Op("*").Id(formatInstructionTypeName(insExportedName))
+								st.Op("*").Id(FormatInstructionTypeName(insExportedName))
 							}),
 						).
 						BlockFunc(func(gr *Group) {
@@ -914,12 +707,12 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 
 					var receiverTypeName string
 					if parentGroupPath == "" {
-						receiverTypeName = formatInstructionTypeName(insExportedName)
+						receiverTypeName = FormatInstructionTypeName(insExportedName)
 					} else {
 						receiverTypeName = builderStructName
 					}
 
-					code.Add(genAccountGettersSetters(
+					code.Add(GenAccountGettersSetters(
 						receiverTypeName,
 						account,
 						groupMemberIndex,
@@ -939,7 +732,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 			// Declare `Build` method on instruction:
 			code := Empty()
 
-			code.Line().Line().Func().Params(Id("inst").Id(formatInstructionTypeName(insExportedName))).Id("Build").
+			code.Line().Line().Func().Params(Id("inst").Id(FormatInstructionTypeName(insExportedName))).Id("Build").
 				Params(
 					ListFunc(func(params *Group) {
 						// Parameters:
@@ -1022,7 +815,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 				Line().
 				Comment("Otherwise, it builds and returns the instruction.").
 				Line().
-				Func().Params(Id("inst").Id(formatInstructionTypeName(insExportedName))).Id("ValidateAndBuild").
+				Func().Params(Id("inst").Id(FormatInstructionTypeName(insExportedName))).Id("ValidateAndBuild").
 				Params(
 					ListFunc(func(params *Group) {
 						// Parameters:
@@ -1052,7 +845,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 			// Declare `Validate` method on instruction:
 			code := Empty()
 
-			code.Line().Line().Func().Params(Id("inst").Op("*").Id(formatInstructionTypeName(insExportedName))).Id("Validate").
+			code.Line().Line().Func().Params(Id("inst").Op("*").Id(FormatInstructionTypeName(insExportedName))).Id("Validate").
 				Params(
 					ListFunc(func(params *Group) {
 						// Parameters:
@@ -1117,7 +910,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 			// Declare `EncodeToTree(parent treeout.Branches)` method in instruction:
 			code := Empty()
 
-			code.Line().Line().Func().Params(Id("inst").Op("*").Id(formatInstructionTypeName(insExportedName))).Id("EncodeToTree").
+			code.Line().Line().Func().Params(Id("inst").Op("*").Id(FormatInstructionTypeName(insExportedName))).Id("EncodeToTree").
 				Params(
 					ListFunc(func(params *Group) {
 						// Parameters:
@@ -1151,7 +944,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 												Call(
 													Qual(PkgFormat, "Param").Call(
 														Lit(strings.Repeat(" ", longest-len(exportedArgName))+exportedArgName+StringIf(arg.Type.IsIdlTypeOption(), " (OPT)")),
-														Add(CodeIf(!arg.Type.IsIdlTypeOption() && !isComplexEnum(arg.Type), Op("*"))).Id("inst").Dot(exportedArgName),
+														Add(CodeIf(!arg.Type.IsIdlTypeOption() && !IsComplexEnum(arg.Type), Op("*"))).Id("inst").Dot(exportedArgName),
 													),
 												)
 										}
@@ -1186,7 +979,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 				genMarshalWithEncoder_struct(
 					&idl,
 					false,
-					formatInstructionTypeName(insExportedName),
+					FormatInstructionTypeName(insExportedName),
 					"",
 					args,
 					true,
@@ -1200,7 +993,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 				genUnmarshalWithDecoder_struct(
 					&idl,
 					false,
-					formatInstructionTypeName(insExportedName),
+					FormatInstructionTypeName(insExportedName),
 					"",
 					args,
 					bin.TypeID{},
@@ -1214,7 +1007,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 				paramNames = append(paramNames, arg.Name)
 			}
 			code := Empty()
-			name := "New" + formatInstructionTypeName(insExportedName)
+			name := "New" + FormatInstructionTypeName(insExportedName)
 			code.Commentf("%s declares a new %s instruction with the provided parameters and accounts.", name, insExportedName)
 			code.Line()
 			code.Func().Id(name).
@@ -1229,13 +1022,13 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 										return Line().Comment("Parameters:")
 									}
 									return Empty()
-								}()).Line().Id(arg.Name).Add(genTypeName(arg.Type))
+								}()).Line().Id(arg.Name).Add(GenTypeName(arg.Type))
 							}
 						}
 						{
 							instruction.Accounts.Walk("", nil, nil, func(parentGroupPath string, index int, parentGroup *IdlAccounts, account *IdlAccount) bool {
 								// skip sysvars:
-								if isSysVar(account.Name) {
+								if IsSysVar(account.Name) {
 									return true
 								}
 								var accountName string
@@ -1263,12 +1056,12 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 				Params(
 					ListFunc(func(results *Group) {
 						// Results:
-						results.Op("*").Id(formatInstructionTypeName(insExportedName))
+						results.Op("*").Id(FormatInstructionTypeName(insExportedName))
 					}),
 				).
 				BlockFunc(func(body *Group) {
 					// Body:
-					builder := body.Return().Id(formatBuilderFuncName(insExportedName)).Call()
+					builder := body.Return().Id(FormatBuilderFuncName(insExportedName)).Call()
 					{
 						for _, arg := range args {
 							exportedArgName := ToCamel(arg.Name)
@@ -1280,7 +1073,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 						declaredReceivers := []string{}
 						instruction.Accounts.Walk("", nil, nil, func(parentGroupPath string, index int, parentGroup *IdlAccounts, account *IdlAccount) bool {
 							// skip sysvars:
-							if isSysVar(account.Name) {
+							if IsSysVar(account.Name) {
 								return true
 							}
 							var accountName string
@@ -1315,7 +1108,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 																return Line().Line()
 															}
 															return Line()
-														}()).Id(formatAccountAccessorName("Set", exportedAccountName)).Call(Id(accountName))
+														}()).Id(FormatAccountAccessorName("Set", exportedAccountName)).Call(Id(accountName))
 
 														if subIndex == len(parentGroup.Accounts)-1 {
 															gr.Op(",").Line()
@@ -1328,7 +1121,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 							}
 
 							if !hasNestedParent {
-								builder.Op(".").Line().Id(formatAccountAccessorName("Set", ToCamel(account.Name))).Call(Id(accountName))
+								builder.Op(".").Line().Id(FormatAccountAccessorName("Set", ToCamel(account.Name))).Call(Id(accountName))
 							}
 
 							return true
@@ -1403,7 +1196,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 					default:
 						panic(fmt.Sprintf("unsupportd constant: %s", spew.Sdump(c)))
 					}
-					cons.Id(formatConstantName(c.Name)).Op("=").Add(val).Line()
+					cons.Id(FormatConstantName(c.Name)).Op("=").Add(val).Line()
 				}
 				Line()
 			}),
@@ -1413,7 +1206,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 			code.Line().Var().Parens(
 				DoGroup(func(dict *Group) {
 					for _, c := range pubkeyVars {
-						constName := formatConstantName(c.Name)
+						constName := FormatConstantName(c.Name)
 						camelName := ToCamel(ToLower(c.Name))
 						dict.Id(camelName).Op("=").Qual(PkgSolanaGo, "MustPublicKeyFromBase58").Call(Op(constName)).Line()
 					}
@@ -1423,7 +1216,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 		if len(byteVars) > 0 {
 			code.Line()
 			for _, c := range byteVars {
-				camelName := formatByteSliceName(c.Name)
+				camelName := FormatByteSliceName(c.Name)
 				var v []string
 				var e int
 				for i := 0; i < len(c.Value); i++ {
@@ -1466,7 +1259,7 @@ func decodeErrorCode(rpcErr error) (errorCode int, ok bool) {
 	return files, nil
 }
 
-func genAccountGettersSetters(
+func GenAccountGettersSetters(
 	receiverTypeName string,
 	account *IdlAccount,
 	index int,
@@ -2148,7 +1941,7 @@ func genProgramBoilerplate(idl IDL) (*File, error) {
 											insName := ToCamel(instruction.Name)
 											insExportedName := ToCamel(instruction.Name)
 											variantBlock.Block(
-												List(Lit(insName), Parens(Op("*").Id(formatInstructionTypeName(insExportedName))).Parens(Nil())).Op(","),
+												List(Lit(insName), Parens(Op("*").Id(FormatInstructionTypeName(insExportedName))).Parens(Nil())).Op(","),
 											).Op(",")
 										}
 									}).Op(",").Line()
@@ -2175,7 +1968,7 @@ func genProgramBoilerplate(idl IDL) (*File, error) {
 											insName := sighash.ToSnakeForSighash(instruction.Name)
 											insExportedName := ToCamel(instruction.Name)
 											variantBlock.Block(
-												List(Id("Name").Op(":").Lit(insName), Id("Type").Op(":").Parens(Op("*").Id(formatInstructionTypeName(insExportedName))).Parens(Nil())).Op(","),
+												List(Id("Name").Op(":").Lit(insName), Id("Type").Op(":").Parens(Op("*").Id(FormatInstructionTypeName(insExportedName))).Parens(Nil())).Op(","),
 											).Op(",")
 										}
 									}).Op(",").Line()
@@ -2453,15 +2246,15 @@ func genProgramBoilerplate(idl IDL) (*File, error) {
 // has an "Account" suffix, then another "Account" suffix is NOT added.
 // E.g. ("Set", "Foo") => "SetFooAccount"
 // E.g. ("Set", "BarAccount") => "SetBarAccount"
-func formatAccountAccessorName(prefix, name string) string {
+func FormatAccountAccessorName(prefix, name string) string {
 	endsWithAccount := strings.HasSuffix(strings.ToLower(name), "account")
-	if !conf.RemoveAccountSuffix || !endsWithAccount {
+	if !GetConfig().RemoveAccountSuffix || !endsWithAccount {
 		return prefix + name + "Account"
 	}
 	return prefix + name
 }
 
-func treeFindLongestNameFromFields(fields []IdlField) (ln int) {
+func TreeFindLongestNameFromFields(fields []IdlField) (ln int) {
 	for _, v := range fields {
 		if len(v.Name) > ln {
 			ln = len(v.Name)
@@ -2470,10 +2263,10 @@ func treeFindLongestNameFromFields(fields []IdlField) (ln int) {
 	return
 }
 
-func treeFindLongestNameFromAccounts(accounts IdlAccountItemSlice) (ln int) {
+func TreeFindLongestNameFromAccounts(accounts IdlAccountItemSlice) (ln int) {
 	accounts.Walk("", nil, nil, func(groupPath string, accountIndex int, parentGroup *IdlAccounts, ia *IdlAccount) bool {
 
-		cleanedName := treeFormatAccountName(ia.Name)
+		cleanedName := TreeFormatAccountName(ia.Name)
 
 		exportedAccountName := filepath.Join(groupPath, cleanedName)
 		if len(exportedAccountName) > ln {
@@ -2485,10 +2278,10 @@ func treeFindLongestNameFromAccounts(accounts IdlAccountItemSlice) (ln int) {
 	return
 }
 
-func treeFormatAccountName(name string) string {
+func TreeFormatAccountName(name string) string {
 	cleanedName := name
-	if isSysVar(name) {
-		cleanedName = strings.TrimSuffix(getSysVarName(name), "PublicKey")
+	if IsSysVar(name) {
+		cleanedName = strings.TrimSuffix(GetSysVarName(name), "PublicKey")
 	}
 	if len(cleanedName) > len("account") {
 		if strings.HasSuffix(cleanedName, "account") {
